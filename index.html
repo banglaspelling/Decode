@@ -102,7 +102,13 @@
 
         async function logTrackingData(imageHash, ipAddress, userAgent) {
             const trackingUrl = "https://script.google.com/macros/s/AKfycbyf_MEDtRuNuCa14RWJQsZUkyWoygj_IB2XnWsQPsPL8mpVXK8z-vtIBya6Wp_RJ8h0/exec"; // Replace with your Google Apps Script URL
+            if (trackingUrl === "https://script.google.com/macros/s/AKfycbyf_MEDtRuNuCa14RWJQsZUkyWoygj_IB2XnWsQPsPL8mpVXK8z-vtIBya6Wp_RJ8h0/exec") {
+                console.error("Tracking URL not set! Please replace with your Google Apps Script URL.");
+                return;
+            }
             try {
+                console.log("Sending tracking data to:", trackingUrl);
+                console.log("Data:", { imageHash, ipAddress, userAgent });
                 const response = await fetch(trackingUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -110,12 +116,20 @@
                         imageHash: imageHash,
                         ipAddress: ipAddress,
                         userAgent: userAgent
-                    })
+                    }),
+                    redirect: 'follow' // Handle redirects explicitly
                 });
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
                 const result = await response.json();
                 console.log("Tracking response:", result);
+                if (result.status !== "success") {
+                    throw new Error("Tracking failed: " + (result.message || "Unknown error"));
+                }
             } catch (e) {
-                console.error("Error logging tracking data:", e);
+                console.error("Error logging tracking data:", e.message);
+                document.getElementById('error').textContent = `Tracking Error: ${e.message}. Tracking data not saved, but password extraction will continue.`;
             }
         }
 
@@ -214,7 +228,11 @@
                         }
                     } catch (e) {
                         console.error("Error in event listener:", e);
-                        errorOutput.textContent = `Error: ${e.message}`;
+                        if (e.message.includes("ERR_TOO_MANY_REDIRECTS") || e.message.includes("Bad Request")) {
+                            errorOutput.textContent = "Error: Unable to access Google Apps Script. Try clearing your browser cookies for script.google.com, using incognito mode, or signing in with a different Google account.";
+                        } else {
+                            errorOutput.textContent = `Error: ${e.message}`;
+                        }
                     }
                 });
             } catch (e) {
