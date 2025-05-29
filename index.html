@@ -7,68 +7,101 @@
 </head>
 <body>
     <h1>Upload Image to Reveal Secret Message</h1>
-    <input type="file" id="imageInput" accept="image/png, image/jpeg">
+    <input type="file" id="imageInput" accept="image/png">
     <p id="output">Decoded message will appear here...</p>
+    <p id="error" style="color: red;"></p>
 
     <script type="text/javascript">
         async function main() {
-            let pyodide = await loadPyodide();
-            await pyodide.loadPackage("micropip");
-            await pyodide.runPythonAsync(`
-                import micropip
-                await micropip.install('Pillow')
-                from PIL import Image
-                import io
-                import base64
+            try {
+                console.log("Loading Pyodide...");
+                let pyodide = await loadPyodide();
+                console.log("Pyodide loaded successfully.");
 
-                def decode_image(base64_string):
-                    # Convert base64 to image
-                    img_data = base64.b64decode(base64_string)
-                    img = Image.open(io.BytesIO(img_data))
-                    img = img.convert("RGB")
-                    pixels = list(img.getdata())
+                await pyodide.runPythonAsync(`
+                    def decode_image(pixel_data, width, height):
+                        try:
+                            # Extract binary message from pixel LSBs
+                            binary_message = ""
+                            for pixel in pixel_data:
+                                for value in pixel[:3]:  # RGB channels
+                                    binary_message += str(value & 1)
+                                    if len(binary_message) >= 16:  # For "Hi" (2 chars)
+                                        break
+                                if len(binary_message) >= 16:
+                                    break
 
-                    # Extract binary message (LSB method)
-                    binary_message = ""
-                    for pixel in pixels:
-                        for value in pixel[:3]:  # RGB channels
-                            binary_message += str(value & 1)
-                            if len(binary_message) >= 16:  # Assuming max 2 chars (16 bits)
-                                break
-                        if len(binary_message) >= 16:
-                            break
+                            print("Binary message extracted:", binary_message)
 
-                    # Convert binary to text
-                    message = ""
-                    for i in range(0, len(binary_message), 8):
-                        byte = binary_message[i:i+8]
-                        if len(byte) == 8:
-                            char = chr(int(byte, 2))
-                            message += char
-                        else:
-                            break
+                            # Convert binary to text
+                            message = ""
+                            for i in range(0, len(binary_message), 8):
+                                byte = binary_message[i:i+8]
+                                if len(byte) == 8:
+                                    char = chr(int(byte, 2))
+                                    message += char
+                                else:
+                                    break
 
-                    return message
+                            print("Decoded message:", message)
+                            return message
+                        except Exception as e:
+                            print("Error in decode_image:", str(e))
+                            return f"Error: {str(e)}"
 
-                # Export function to JavaScript
-                __pyodide__.globals.set("decode_image", decode_image)
-            `);
+                    # Export function to JavaScript
+                    __pyodide__.globals.set("decode_image", decode_image)
+                `);
+                console.log("Python setup complete.");
 
-            const input = document.getElementById('imageInput');
-            const output = document.getElementById('output');
+                const input = document.getElementById('imageInput');
+                const output = document.getElementById('output');
+                const errorOutput = document.getElementById('error');
 
-            input.addEventListener('change', async (event) => {
-                const file = event.target.files[0];
-                if (file) {
-                    const reader = new FileReader();
-                    reader.onload = async (e) => {
-                        const base64String = e.target.result.split(',')[1]; // Get base64 data
-                        const decodedMessage = await pyodide.runPythonAsync(`decode_image("${base64String}")`);
-                        output.textContent = `Decoded message: ${decodedMessage}`;
-                    };
-                    reader.readAsDataURL(file);
-                }
-            });
+                input.addEventListener('change', async (event) => {
+                    try {
+                        console.log("Image uploaded, processing...");
+                        const file = event.target.files[0];
+                        if (file) {
+                            const img = new Image();
+                            img.src = URL.createObjectURL(file);
+                            await new Promise((resolve) => img.onload = resolve);
+
+                            const canvas = document.createElement('canvas');
+                            canvas.width = img.width;
+                            canvas.height = img.height;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0);
+                            const imageData = ctx.getImageData(0, 0, img.width, img.height).data;
+
+                            // Convert pixel data to a list of [R, G, B, A] tuples
+                            const pixels = [];
+                            for (let i = 0; i < imageData.length; i += 4) {
+                                pixels.push([imageData[i], imageData[i+1], imageData[i+2], imageData[i+3]]);
+                            }
+
+                            console.log("Passing pixel data to Python...");
+                            const decodedMessage = await pyodide.runPythonAsync(
+                                `decode_image(${JSON.stringify(pixels)}, ${img.width}, ${img.height})`
+                            );
+                            console.log("Decoded message received:", decodedMessage);
+                            if (decodedMessage.startsWith("Error:")) {
+                                errorOutput.textContent = decodedMessage;
+                            } else {
+                                output.textContent = `Decoded message: ${decodedMessage}`;
+                            }
+                        } else {
+                            errorOutput.textContent = "No file selected.";
+                        }
+                    } catch (e) {
+                        console.error("Error in event listener:", e);
+                        errorOutput.textContent = `Error: ${e.message}`;
+                    }
+                });
+            } catch (e) {
+                console.error("Error loading Pyodide or setup:", e);
+                document.getElementById('error').textContent = `Setup Error: ${e.message}`;
+            }
         }
 
         main();
